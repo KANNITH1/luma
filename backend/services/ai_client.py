@@ -19,7 +19,7 @@ class AIClient:
         # AI Server IP / URL (Configured for node 3: 192.168.1.30:7860)
         self.server_url = os.environ.get('AI_SERVER_URL', 'http://192.168.1.30:7860').rstrip('/')
         self.mock_mode = os.environ.get('AI_MOCK_MODE', 'false').lower() in ('true', '1', 'yes')
-        self.timeout = int(os.environ.get('AI_TIMEOUT_SECONDS', '120'))
+        self.timeout = int(os.environ.get('AI_TIMEOUT_SECONDS', '15'))
         
         logger.info(f"AIClient initialized. Server URL: {self.server_url}, Mock Mode: {self.mock_mode}, Timeout: {self.timeout}s")
 
@@ -69,7 +69,9 @@ class AIClient:
 
         start_time = time.time()
         try:
-            response = requests.post(endpoint, json=payload, timeout=self.timeout)
+            # Tuple timeout: (connect_timeout, read_timeout)
+            connect_timeout = min(5, self.timeout)
+            response = requests.post(endpoint, json=payload, timeout=(connect_timeout, self.timeout))
             response.raise_for_status()
             data = response.json()
             elapsed = time.time() - start_time
@@ -86,11 +88,12 @@ class AIClient:
                 "info": data.get("info", "")
             }
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error connecting to AI Server at {endpoint}: {e}")
+            logger.warning(f"[FALLBACK TRIGGERED] AI Server at {endpoint} unreachable or timed out ({self.timeout}s): {e}")
             # Fallback to mock simulation if server is unreachable and allow_fallback is enabled
             if os.environ.get('AI_ALLOW_FALLBACK_MOCK', 'true').lower() in ('true', '1'):
-                logger.warning("AI Server unreachable, falling back to simulated generation.")
+                logger.info(f"[FALLBACK ACTIVE] Generating simulated procedural image for prompt: '{prompt[:50]}...'")
                 return self._generate_mock_result(prompt, width, height, steps, seed, mode="txt2img (fallback)")
+            logger.error(f"AI Server connection error and fallback mock is disabled: {e}")
             raise RuntimeError(f"AI Server connection error: {str(e)}")
 
     def generate_img2img(self, 
@@ -135,7 +138,8 @@ class AIClient:
 
         start_time = time.time()
         try:
-            response = requests.post(endpoint, json=payload, timeout=self.timeout)
+            connect_timeout = min(5, self.timeout)
+            response = requests.post(endpoint, json=payload, timeout=(connect_timeout, self.timeout))
             response.raise_for_status()
             data = response.json()
             elapsed = time.time() - start_time
@@ -152,10 +156,11 @@ class AIClient:
                 "info": data.get("info", "")
             }
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error connecting to AI Server at {endpoint}: {e}")
+            logger.warning(f"[FALLBACK TRIGGERED] AI Server at {endpoint} unreachable or timed out ({self.timeout}s): {e}")
             if os.environ.get('AI_ALLOW_FALLBACK_MOCK', 'true').lower() in ('true', '1'):
-                logger.warning("AI Server unreachable, falling back to simulated generation.")
+                logger.info("[FALLBACK ACTIVE] Generating simulated procedural image for img2img")
                 return self._generate_mock_result(prompt, width, height, steps, seed, mode="img2img (fallback)")
+            logger.error(f"AI Server connection error and fallback mock is disabled: {e}")
             raise RuntimeError(f"AI Server connection error: {str(e)}")
 
     def _strip_base64_header(self, data_url: str) -> str:
