@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Blueprint, request, jsonify, current_app
+from sqlalchemy.exc import IntegrityError
 from models import db, User
 
 logger = logging.getLogger('luma.auth')
@@ -84,6 +85,10 @@ def register():
             'message': 'User registered successfully',
             'user': user.to_dict()
         }), 201
+    except IntegrityError:
+        db.session.rollback()
+        logger.warning(f"Registration conflict for username '{username}' (IntegrityError)")
+        return jsonify({'error': 'Conflict', 'message': f"Username '{username}' is already taken"}), 409
     except Exception as e:
         db.session.rollback()
         logger.error(f"Registration error for {username}: {e}")
