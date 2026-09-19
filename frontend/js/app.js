@@ -51,6 +51,19 @@ function getAuthHeaders() {
   };
 }
 
+/**
+ * Safely parse JSON response and prevent "Unexpected token <" errors
+ * when server returns HTML error pages.
+ */
+async function parseJsonResponse(res, fallbackErrMsg = 'Request failed') {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return await res.json();
+  }
+  const rawText = await res.text();
+  throw new Error(`Server returned unexpected response (${res.status}): ${rawText.slice(0, 100) || fallbackErrMsg}`);
+}
+
 function checkAuthGuard() {
   const currentPage = window.location.pathname.split('/').pop() || 'index.html';
   const isLoginPage = currentPage === 'login.html';
@@ -139,7 +152,7 @@ function initAuthPage() {
           body: JSON.stringify({ username, password })
         });
 
-        const data = await res.json();
+        const data = await parseJsonResponse(res, 'Login failed');
         if (!res.ok) {
           throw new Error(data.message || data.error || 'Login failed');
         }
@@ -190,7 +203,7 @@ function initAuthPage() {
           body: JSON.stringify({ username, password })
         });
 
-        const data = await res.json();
+        const data = await parseJsonResponse(res, 'Registration failed');
         if (!res.ok) {
           throw new Error(data.message || data.error || 'Registration failed');
         }
@@ -438,13 +451,13 @@ function initGeneratorPage() {
           body: JSON.stringify(payload)
         });
 
-        const data = await response.json();
-
         if (response.status === 401) {
           clearAuth();
           window.location.href = 'login.html';
           return;
         }
+
+        const data = await parseJsonResponse(response, 'Image generation failed');
 
         if (!response.ok) {
           throw new Error(data.message || data.error || 'Generation failed');
@@ -482,7 +495,7 @@ function initGeneratorPage() {
         const res = await fetch(`${API_BASE}/status/${jobId}`, {
           headers: getAuthHeaders()
         });
-        const statusData = await res.json();
+        const statusData = await parseJsonResponse(res, 'Failed to get job status');
 
         if (statusData.status === 'COMPLETED') {
           clearInterval(pollInterval);
@@ -573,7 +586,7 @@ function initHistoryPage() {
         return;
       }
 
-      const data = await res.json();
+      const data = await parseJsonResponse(res, 'Failed to load history');
       if (!res.ok) {
         throw new Error(data.message || data.error || 'Failed to load history');
       }
