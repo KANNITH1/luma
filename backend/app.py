@@ -7,8 +7,10 @@ import os
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
+# pyrefly: ignore [missing-import]
 from flask import Flask, jsonify
 from flask_cors import CORS
+# pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
 
 # Import database and blueprints
@@ -71,14 +73,26 @@ def create_app():
             }
         }), 200
 
-    @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({'error': 'Not Found', 'message': 'Requested API endpoint does not exist'}), 404
+    # pyrefly: ignore [missing-import]
+    from werkzeug.exceptions import HTTPException
 
-    @app.errorhandler(500)
-    def internal_error(e):
-        app.logger.error(f"Internal Server Error: {e}")
-        return jsonify({'error': 'Internal Server Error', 'message': 'An unexpected server error occurred'}), 500
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(e):
+        """Ensure all HTTP errors (400, 401, 403, 404, 405, 500) return JSON, never HTML"""
+        return jsonify({
+            'error': e.name,
+            'message': e.description,
+            'code': e.code
+        }), e.code
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_exception(e):
+        """Catch-all for any unhandled exceptions to prevent Flask default HTML error page"""
+        app.logger.error(f"Unhandled Exception: {e}", exc_info=True)
+        return jsonify({
+            'error': 'Internal Server Error',
+            'message': str(e)
+        }), 500
 
     return app
 

@@ -123,6 +123,30 @@ def generate_image(current_user):
             'created_at': job.created_at.isoformat()
         }), 200
 
+    except TimeoutError as te:
+        logger.error(f"Generation timeout for job {job.id}: {te}")
+        job.status = 'FAILED'
+        job.error_message = str(te)
+        db.session.commit()
+        return jsonify({
+            'job_id': job.id,
+            'status': 'FAILED',
+            'error': 'Gateway Timeout',
+            'message': str(te)
+        }), 504
+
+    except RuntimeError as re:
+        logger.error(f"AI Server error for job {job.id}: {re}")
+        job.status = 'FAILED'
+        job.error_message = str(re)
+        db.session.commit()
+        return jsonify({
+            'job_id': job.id,
+            'status': 'FAILED',
+            'error': 'AI Server Error',
+            'message': str(re)
+        }), 502
+
     except Exception as e:
         logger.error(f"Generation failed for job {job.id}: {e}", exc_info=True)
         job.status = 'FAILED'

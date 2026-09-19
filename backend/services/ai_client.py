@@ -16,19 +16,30 @@ logger = logging.getLogger('luma.ai_client')
 
 class AIClient:
     def __init__(self):
-        # AI Server IP / URL (Configured for node 3: 192.168.1.30:7860)
-        self.server_url = os.environ.get('AI_SERVER_URL', 'http://192.168.1.30:7860').rstrip('/')
+        # AI Server IP / URL (Configured for node 3: 192.168.1.30:7860, or local dev: http://127.0.0.1:7860)
+        self.server_url = os.environ.get('AI_SERVER_URL', 'http://127.0.0.1:7860').rstrip('/')
         self.mock_mode = os.environ.get('AI_MOCK_MODE', 'false').lower() in ('true', '1', 'yes')
-        self.timeout = int(os.environ.get('AI_TIMEOUT_SECONDS', '15'))
         
-        logger.info(f"AIClient initialized. Server URL: {self.server_url}, Mock Mode: {self.mock_mode}, Timeout: {self.timeout}s")
+        # Real AI Server generation timeout (120-180 seconds recommended for SDXL models on GPU)
+        self.server_timeout = int(os.environ.get('AI_SERVER_TIMEOUT') or os.environ.get('AI_TIMEOUT_SECONDS') or '180')
+        
+        # Short connect timeout (seconds) to detect quickly if AI server is offline
+        self.connect_timeout = int(os.environ.get('AI_CONNECT_TIMEOUT', '10'))
+        
+        # Whether to allow procedural mock fallback when AI server cannot be reached
+        self.allow_fallback = os.environ.get('AI_ALLOW_FALLBACK_MOCK', 'true').lower() in ('true', '1', 'yes')
+        
+        logger.info(
+            f"AIClient initialized. Server URL: {self.server_url}, Mock Mode: {self.mock_mode}, "
+            f"Server Timeout: {self.server_timeout}s, Connect Timeout: {self.connect_timeout}s, Allow Fallback: {self.allow_fallback}"
+        )
 
     def is_healthy(self) -> bool:
         """Check if AI Server is reachable"""
         if self.mock_mode:
             return True
         try:
-            res = requests.get(f"{self.server_url}/sdapi/v1/options", timeout=5)
+            res = requests.get(f"{self.server_url}/sdapi/v1/options", timeout=self.connect_timeout)
             return res.status_code == 200
         except Exception as e:
             logger.warning(f"AI Server health check failed: {e}")
@@ -47,7 +58,7 @@ class AIClient:
         Endpoint: POST /sdapi/v1/txt2img
         """
         if self.mock_mode:
-            logger.info(f"[MOCK] Simulating txt2img generation for prompt: '{prompt}'")
+            logger.info(f"[MOCK MODE] Simulating txt2img generation for prompt: '{prompt}'")
             return self._generate_mock_result(prompt, width, height, steps, seed, mode="txt2img")
 
         payload = {
@@ -65,15 +76,29 @@ class AIClient:
         }
 
         endpoint = f"{self.server_url}/sdapi/v1/txt2img"
-        logger.info(f"Calling AI Server txt2img endpoint: {endpoint} with prompt: '{prompt[:60]}...'")
+        logger.info(f"Calling AI Server txt2img endpoint: {endpoint} (Prompt: '{prompt[:60]}...', Timeout: {self.server_timeout}s)")
 
         start_time = time.time()
         try:
-            # Tuple timeout: (connect_timeout, read_timeout)
-            connect_timeout = min(5, self.timeout)
-            response = requests.post(endpoint, json=payload, timeout=(connect_timeout, self.timeout))
-            response.raise_for_status()
-            data = response.json()
+            response = requests.post(
+                endpoint, 
+                json=payload, 
+                timeout=(self.connect_timeout, self.server_timeout)
+            )
+
+            # 1. Handle HTTP error codes from Forge
+            if response.status_code != 200:
+                err_detail = self._extract_error_detail(response)
+                logger.error(f"Forge AI Server returned HTTP {response.status_code}: {err_detail}")
+                raise RuntimeError(f"Forge AI Server error ({response.status_code}): {err_detail}")
+
+            # 2. Parse response JSON safely
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.error(f"Failed to parse Forge API response as JSON: {json_err}. Body: {response.text[:200]}")
+                raise ValueError(f"AI Server returned non-JSON response: {json_err}")
+
             elapsed = time.time() - start_time
             logger.info(f"AI Server generation completed in {elapsed:.2f}s")
 
@@ -87,14 +112,21 @@ class AIClient:
                 "elapsed_seconds": round(elapsed, 2),
                 "info": data.get("info", "")
             }
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"[FALLBACK TRIGGERED] AI Server at {endpoint} unreachable or timed out ({self.timeout}s): {e}")
-            # Fallback to mock simulation if server is unreachable and allow_fallback is enabled
-            if os.environ.get('AI_ALLOW_FALLBACK_MOCK', 'true').lower() in ('true', '1'):
+
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as conn_err:
+            logger.warning(f"[FALLBACK TRIGGERED] AI Server at {endpoint} is unreachable (connect timeout {self.connect_timeout}s): {conn_err}")
+            if self.allow_fallback:
                 logger.info(f"[FALLBACK ACTIVE] Generating simulated procedural image for prompt: '{prompt[:50]}...'")
                 return self._generate_mock_result(prompt, width, height, steps, seed, mode="txt2img (fallback)")
-            logger.error(f"AI Server connection error and fallback mock is disabled: {e}")
-            raise RuntimeError(f"AI Server connection error: {str(e)}")
+            raise RuntimeError(f"Cannot connect to AI Server at {self.server_url}: {conn_err}")
+
+        except requests.exceptions.ReadTimeout as timeout_err:
+            logger.error(f"AI Server generation timed out after {self.server_timeout}s: {timeout_err}")
+            raise TimeoutError(f"AI Server generation timed out after {self.server_timeout} seconds. Consider smaller dimensions or fewer steps.")
+
+        except requests.exceptions.RequestException as req_err:
+            logger.error(f"AI Server request failed: {req_err}")
+            raise RuntimeError(f"AI Server request failed: {req_err}")
 
     def generate_img2img(self, 
                           init_image_base64: str, 
@@ -110,11 +142,10 @@ class AIClient:
         Generate image from existing image via Stability Matrix (Forge/A1111 API)
         Endpoint: POST /sdapi/v1/img2img
         """
-        # Strip Data URL prefix if present (e.g. data:image/png;base64,...)
         clean_base64 = self._strip_base64_header(init_image_base64)
 
         if self.mock_mode:
-            logger.info(f"[MOCK] Simulating img2img generation for prompt: '{prompt}'")
+            logger.info(f"[MOCK MODE] Simulating img2img generation for prompt: '{prompt}'")
             return self._generate_mock_result(prompt, width, height, steps, seed, mode="img2img")
 
         payload = {
@@ -134,14 +165,27 @@ class AIClient:
         }
 
         endpoint = f"{self.server_url}/sdapi/v1/img2img"
-        logger.info(f"Calling AI Server img2img endpoint: {endpoint}")
+        logger.info(f"Calling AI Server img2img endpoint: {endpoint} (Timeout: {self.server_timeout}s)")
 
         start_time = time.time()
         try:
-            connect_timeout = min(5, self.timeout)
-            response = requests.post(endpoint, json=payload, timeout=(connect_timeout, self.timeout))
-            response.raise_for_status()
-            data = response.json()
+            response = requests.post(
+                endpoint, 
+                json=payload, 
+                timeout=(self.connect_timeout, self.server_timeout)
+            )
+
+            if response.status_code != 200:
+                err_detail = self._extract_error_detail(response)
+                logger.error(f"Forge AI Server returned HTTP {response.status_code}: {err_detail}")
+                raise RuntimeError(f"Forge AI Server error ({response.status_code}): {err_detail}")
+
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.error(f"Failed to parse Forge API response as JSON: {json_err}. Body: {response.text[:200]}")
+                raise ValueError(f"AI Server returned non-JSON response: {json_err}")
+
             elapsed = time.time() - start_time
             logger.info(f"AI Server img2img completed in {elapsed:.2f}s")
 
@@ -155,13 +199,31 @@ class AIClient:
                 "elapsed_seconds": round(elapsed, 2),
                 "info": data.get("info", "")
             }
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"[FALLBACK TRIGGERED] AI Server at {endpoint} unreachable or timed out ({self.timeout}s): {e}")
-            if os.environ.get('AI_ALLOW_FALLBACK_MOCK', 'true').lower() in ('true', '1'):
+
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as conn_err:
+            logger.warning(f"[FALLBACK TRIGGERED] AI Server at {endpoint} is unreachable: {conn_err}")
+            if self.allow_fallback:
                 logger.info("[FALLBACK ACTIVE] Generating simulated procedural image for img2img")
                 return self._generate_mock_result(prompt, width, height, steps, seed, mode="img2img (fallback)")
-            logger.error(f"AI Server connection error and fallback mock is disabled: {e}")
-            raise RuntimeError(f"AI Server connection error: {str(e)}")
+            raise RuntimeError(f"Cannot connect to AI Server at {self.server_url}: {conn_err}")
+
+        except requests.exceptions.ReadTimeout as timeout_err:
+            logger.error(f"AI Server img2img timed out after {self.server_timeout}s: {timeout_err}")
+            raise TimeoutError(f"AI Server generation timed out after {self.server_timeout} seconds.")
+
+        except requests.exceptions.RequestException as req_err:
+            logger.error(f"AI Server request failed: {req_err}")
+            raise RuntimeError(f"AI Server request failed: {req_err}")
+
+    def _extract_error_detail(self, response: requests.Response) -> str:
+        """Helper to extract meaningful error message from Forge response"""
+        try:
+            data = response.json()
+            if isinstance(data, dict):
+                return data.get('error') or data.get('detail') or data.get('message') or str(data)
+        except Exception:
+            pass
+        return response.text[:300] or f"HTTP {response.status_code}"
 
     def _strip_base64_header(self, data_url: str) -> str:
         """Helper to extract pure base64 string from data URI"""
@@ -174,16 +236,14 @@ class AIClient:
         Generates an aesthetic procedural image for development and testing
         when AI Server is offline or being developed on a separate machine.
         """
-        # Add slight artificial delay to simulate real AI generation
         time.sleep(1.2)
         
         try:
+            # pyrefly: ignore [missing-import]
             from PIL import Image, ImageDraw
-            # Create high quality mock graphic
             img = Image.new('RGB', (width, height), color=(15, 23, 42))
             draw = ImageDraw.Draw(img)
 
-            # Draw procedural decorative circles and gradients
             colors = [
                 (99, 102, 241),   # Indigo
                 (168, 85, 247),  # Purple
@@ -197,11 +257,9 @@ class AIClient:
                 c = colors[i % len(colors)]
                 draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=c, width=3)
 
-            # Draw banner info
             banner_height = 80
             draw.rectangle([0, height - banner_height, width, height], fill=(10, 13, 20))
             
-            # Text rendering
             title_text = f"LUMA AI STUDIO - {mode.upper()}"
             draw.text((20, height - banner_height + 15), title_text, fill=(248, 250, 252))
             
@@ -213,7 +271,6 @@ class AIClient:
             img_b64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
         except ImportError:
-            # Fallback 1x1 transparent PNG if Pillow is not yet installed
             img_b64 = (
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
                 "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
