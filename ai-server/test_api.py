@@ -6,11 +6,9 @@ on Stability Matrix (Forge WebUI / Automatic1111 API)
 """
 
 import os
-import sys
 import time
 import base64
 import argparse
-import json
 import requests
 
 DEFAULT_SERVER_URL = os.environ.get("AI_SERVER_URL", "http://192.168.1.30:7860").rstrip('/')
@@ -57,7 +55,7 @@ def test_txt2img(server_url: str, prompt: str, negative_prompt: str, width: int,
         "save_images": False
     }
 
-    print(f"\n[+] Testing Text-to-Image generation...")
+    print("\n[+] Testing Text-to-Image generation...")
     print(f"    Endpoint: {endpoint}")
     print(f"    Prompt: '{prompt}'")
     print(f"    Resolution: {width}x{height}, Steps: {steps}, CFG: {cfg_scale}")
@@ -113,7 +111,7 @@ def test_img2img(server_url: str, input_image_path: str, prompt: str, denoising_
         "save_images": False
     }
 
-    print(f"\n[+] Testing Image-to-Image generation...")
+    print("\n[+] Testing Image-to-Image generation...")
     print(f"    Endpoint: {endpoint}")
     print(f"    Input image: {input_image_path}")
     print(f"    Prompt: '{prompt}'")

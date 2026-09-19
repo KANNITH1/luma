@@ -10,7 +10,7 @@ import time
 import base64
 import logging
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger('luma.ai_client')
 
@@ -173,7 +173,7 @@ class AIClient:
         time.sleep(1.2)
         
         try:
-            from PIL import Image, ImageDraw, ImageFont
+            from PIL import Image, ImageDraw
             # Create high quality mock graphic
             img = Image.new('RGB', (width, height), color=(15, 23, 42))
             draw = ImageDraw.Draw(img)

@@ -11,13 +11,13 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
 # Import database and blueprints
 from models import db
 from routes.auth import auth_bp
 from routes.generate import generate_bp
+
+# Load environment variables from .env file
+load_dotenv()
 
 def create_app():
     """Application factory for LUMA Flask Backend"""
