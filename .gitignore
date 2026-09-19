@@ -1,0 +1,84 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# Databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+instance/
+
+# Flask & Application Logs
+*.log
+logs/
+log/
+
+# IDE and Editor Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# AI Models & Weights
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+*.onnx
+models/
+
+# Generated Images and Uploads (Outputs)
+backend/outputs/*
+!backend/outputs/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+outputs/
+uploads/
